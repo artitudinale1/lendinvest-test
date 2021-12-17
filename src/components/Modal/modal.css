@@ -1,0 +1,33 @@
+.modalContainer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.modalContainer .modal {
+  position: relative;
+  width: 30vw;
+  height: auto;
+  background-color: #fff;
+  padding: 2rem;
+  box-shadow: 0 0 1rem 0 rgba(0, 0, 0, 0.2);
+}
+
+.modalContainer .close {
+  cursor: pointer;
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: transparent;
+}
+
+.modalContainer .modal_content p {
+  font-size: 1em;
+  line-height: 1.5em;
+  list-style: none;
+}
