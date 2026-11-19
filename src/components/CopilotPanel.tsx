@@ -82,7 +82,7 @@ export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps
         });
         return;
       }
-      const response = await fetch('/api/copilot', {
+      const response = await fetch(`${import.meta.env.VITE_COPILOT_API_URL?.replace(/\/$/, '') ?? ''}/api/copilot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: trimmed, budget, allocations }),
