@@ -10,6 +10,7 @@ import {
   type CopilotIntent,
 } from '../copilot';
 import { isStaticCopilotDemo } from '../copilotDemo';
+import { TurnstileWidget } from './TurnstileWidget';
 import {
   createCatalogue,
   formatPence,
@@ -39,6 +40,10 @@ export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [answer, setAnswer] = useState<Answer | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const [challengeVersion, setChallengeVersion] = useState(0);
+  const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
+  const liveWorker = !isStaticCopilotDemo() && Boolean(import.meta.env.VITE_COPILOT_API_URL);
   const signature = `${budget}\n${JSON.stringify(allocations)}`;
   const visible = answer?.signature === signature ? answer : null;
   const resolved = visible
@@ -63,6 +68,10 @@ export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps
     if (trimmed === '' || loading) {
       return;
     }
+    if (liveWorker && !turnstileToken) {
+      setError('Complete the security verification before asking.');
+      return;
+    }
     setQuestion(trimmed);
     setLoading(true);
     setError(null);
@@ -85,7 +94,7 @@ export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps
       const response = await fetch(`${import.meta.env.VITE_COPILOT_API_URL?.replace(/\/$/, '') ?? ''}/api/copilot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: trimmed, budget, allocations }),
+        body: JSON.stringify({ question: trimmed, budget, allocations, ...(liveWorker ? { turnstileToken } : {}) }),
       });
       const payload: unknown = await response.json();
       if (!response.ok) {
@@ -107,6 +116,10 @@ export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps
     } catch {
       setError('Investment Copilot is unavailable.');
     } finally {
+      if (liveWorker) {
+        setTurnstileToken('');
+        setChallengeVersion((version) => version + 1);
+      }
       setLoading(false);
     }
   }
@@ -147,6 +160,11 @@ export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps
           </button>
         ))}
       </div>
+      {liveWorker && siteKey ? (
+        <div className="mt-4">
+          <TurnstileWidget key={challengeVersion} siteKey={siteKey} onToken={setTurnstileToken} />
+        </div>
+      ) : null}
       <form
         className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end"
         onSubmit={(event) => {
