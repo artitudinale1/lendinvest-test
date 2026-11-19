@@ -82,6 +82,54 @@ describe('Investment Copilot', () => {
     expect(screen.queryByText(/£1,234.00/)).not.toBeInTheDocument();
   });
 
+  it('shows a Markdown-style explanation as plain wrapped paragraphs', async () => {
+    const markdown = [
+      'Your current allocation totals £10,000.00.',
+      '**1. 9 Munro Court, Bartin Close, Sheffield** - Allocated: £4,000.00 (40.0%) at 8.60% (£344.00)',
+      '**2. 12 Hollins Green Road, Marple** - Allocated: £4,000.00 (40.0%) at 7.10% (£284.00)',
+      '**3. Robins Gate, Wavering Lane West, Gillingham** - Allocated: £2,000.00 (20.0%) at 4.80% (£96.00)',
+      '**Overall** - Combined illustrative annual gross return: £724.00',
+    ].join(' ');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          intent: { type: 'explain_allocation' },
+          explanation: markdown,
+          explanationStatus: 'model',
+          notice: null,
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Investment Lab' }));
+    await user.type(screen.getByLabelText('Investment budget'), '10000');
+    await user.type(screen.getByLabelText(SHEFFIELD), '4000');
+    await user.type(screen.getByLabelText('12 Hollins Green Road, Marple'), '4000');
+    await user.type(screen.getByLabelText('Robins Gate, Wavering Lane West, Gillingham'), '2000');
+    await user.click(
+      screen.getByRole('button', { name: 'Explain my current investment allocation.' }),
+    );
+
+    const heading = await screen.findByRole('heading', { name: 'AI explanation' });
+    const block = heading.parentElement;
+    if (!(block instanceof HTMLElement)) {
+      throw new Error('Missing explanation block');
+    }
+    const paragraphs = [...block.querySelectorAll('p.break-words')].map((paragraph) => paragraph.textContent ?? '');
+    expect(block.textContent).not.toContain('**');
+    expect(paragraphs).toEqual([
+      'Your current allocation totals £10,000.00.',
+      '1. 9 Munro Court, Bartin Close, Sheffield - Allocated: £4,000.00 (40.0%) at 8.60% (£344.00)',
+      '2. 12 Hollins Green Road, Marple - Allocated: £4,000.00 (40.0%) at 7.10% (£284.00)',
+      '3. Robins Gate, Wavering Lane West, Gillingham - Allocated: £2,000.00 (20.0%) at 4.80% (£96.00)',
+      'Overall - Combined illustrative annual gross return: £724.00',
+    ]);
+    expect(block.textContent).toContain('Generated text. The figures above come from the calculation.');
+  });
+
   it('does not change a current loans investment when a preview is dismissed', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(distributeIntent())));
     const user = userEvent.setup();

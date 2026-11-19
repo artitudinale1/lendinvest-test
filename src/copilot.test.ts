@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   explanationMatchesFacts,
+  explanationParagraphs,
   parseIntent,
   resolveIntent,
 } from './copilot';
@@ -111,5 +112,19 @@ describe('copilot calculations', () => {
       true,
     );
     expect(explanationMatchesFacts('The return is £724.00 plus £1,234.00.', resolved.lines)).toBe(false);
+  });
+
+  it('turns Markdown-style explanation text into plain paragraphs', () => {
+    const paragraphs = explanationParagraphs(
+      'Your current allocation totals £10,000.00.\n\n**1. 9 Munro Court, Bartin Close, Sheffield** - Allocated: £4,000.00 (40.0%) at 8.60% (£344.00) **2. 12 Hollins Green Road, Marple** - Allocated: £4,000.00 **Overall** - Combined return: £724.00',
+    );
+
+    expect(paragraphs.join('\n')).not.toMatch(/\*\*|__|`|^#/m);
+    expect(paragraphs).toEqual([
+      'Your current allocation totals £10,000.00.',
+      '1. 9 Munro Court, Bartin Close, Sheffield - Allocated: £4,000.00 (40.0%) at 8.60% (£344.00)',
+      '2. 12 Hollins Green Road, Marple - Allocated: £4,000.00',
+      'Overall - Combined return: £724.00',
+    ]);
   });
 });

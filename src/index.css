@@ -11,6 +11,22 @@
   --color-ice: #e8f1fb;
 }
 
+@layer base {
+  a,
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  input,
+  textarea {
+    cursor: text;
+  }
+}
+
 @keyframes copilot-ellipsis {
   0% {
     width: 0;

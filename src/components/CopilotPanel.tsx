@@ -5,6 +5,7 @@ import {
   MODEL_UNAVAILABLE,
   exampleIntent,
   explanationMatchesFacts,
+  explanationParagraphs,
   parseIntent,
   resolveIntent,
   type CopilotIntent,
@@ -55,6 +56,7 @@ export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps
     explanationMatchesFacts(visible.explanation, resolved.lines)
       ? visible.explanation
       : null;
+  const explanationParts = explanation ? explanationParagraphs(explanation) : [];
   const previewKey = resolved?.proposal ? `${signature}:${JSON.stringify(visible?.intent)}` : '';
 
   useEffect(() => {
@@ -247,10 +249,16 @@ export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps
                 </div>
               </div>
             ) : null}
-            {explanation ? (
-              <div>
+            {explanationParts.length > 0 ? (
+              <div className="min-w-0 max-w-full">
                 <h3 className="text-sm font-semibold text-ink">AI explanation</h3>
-                <p className="mt-1 text-sm text-slate-700">{explanation}</p>
+                <div className="mt-2 min-w-0 max-w-full space-y-2.5">
+                  {explanationParts.map((paragraph, index) => (
+                    <p key={`${index}:${paragraph}`} className="text-sm leading-6 break-words text-slate-700">
+                      {paragraph}
+                    </p>
+                  ))}
+                </div>
                 <p className="mt-1 text-xs text-slate-500">
                   Generated text. The figures above come from the calculation.
                 </p>

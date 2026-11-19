@@ -181,6 +181,30 @@ export function explanationMatchesFacts(explanation: string, lines: readonly str
   return figures.every((figure) => allow.includes(figure));
 }
 
+export function explanationParagraphs(text: string): string[] {
+  const plain = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\s*__(?=\d{1,2}\.\s)/g, '\n\n')
+    .replace(/\s*\*\*(?=\d{1,2}\.\s)/g, '\n\n')
+    .replace(/\s*__(?=[A-Z])/g, '\n\n')
+    .replace(/\s*\*\*(?=[A-Z])/g, '\n\n')
+    .replace(/```/g, '')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/<[^>\n]+>/g, '')
+    .replace(/^#{1,6}[ \t]+/gm, '')
+    .replace(/__|\*\*/g, '')
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?|]|$)/g, '$1$2')
+    .replace(/^[ \t]*[*+-][ \t]+/gm, '');
+
+  return plain
+    .split(/\n{2,}/)
+    .flatMap((block) => block.split(/(?<=\S)\s+(?=\d{1,2}\.\s+[A-Z])/))
+    .map((paragraph) => paragraph.replace(/[ \t]*\n[ \t]*/g, ' ').replace(/[ \t]{2,}/g, ' ').trim())
+    .filter(Boolean);
+}
+
 export function catalogueForPrompt(catalogue: readonly CatalogueLoan[] = createCatalogue()): string {
   return catalogue
     .map((loan, index) => {
