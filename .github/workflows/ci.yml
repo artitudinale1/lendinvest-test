@@ -56,10 +56,9 @@ jobs:
         uses: actions/configure-pages@v6
       - name: Install
         run: npm ci
-      - name: Build public demo
+      - name: Build public Copilot
         run: npm run build
         env:
-          VITE_COPILOT_DEMO: 'true'
           VITE_COPILOT_API_URL: ${{ vars.VITE_COPILOT_API_URL }}
           VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
       - name: Upload Pages artifact
