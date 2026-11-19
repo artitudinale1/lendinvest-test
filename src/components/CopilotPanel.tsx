@@ -294,26 +294,63 @@ function CalculatedResult({
 
 function ScenarioFacts({ scenario }: { scenario: Scenario }) {
   return (
-    <dl className="mt-2 grid gap-1 text-sm text-ink">
-      <div className="flex justify-between gap-4">
-        <dt>Total allocated</dt>
-        <dd>{formatPence(scenario.allocatedPounds * 100)}</dd>
-      </div>
-      <div className="flex justify-between gap-4">
-        <dt>Illustrative annual gross return</dt>
-        <dd>{formatPence(scenario.totalReturnPence)}</dd>
-      </div>
-      {scenario.rows.map((row) => (
-        <div key={row.loanId} className="flex justify-between gap-4">
-          <dt>{row.title}</dt>
-          <dd>
-            {row.included
-              ? `${formatPence(row.pounds * 100)} · ${formatShare(row.shareTenths)} · ${formatPence(row.returnPence)}`
-              : 'Not included'}
-          </dd>
+    <div className="mt-2">
+      <dl className="grid gap-1 text-sm text-ink">
+        <div className="flex justify-between gap-4">
+          <dt>Total allocated</dt>
+          <dd className="whitespace-nowrap tabular-nums">{formatPence(scenario.allocatedPounds * 100)}</dd>
         </div>
-      ))}
-    </dl>
+        <div className="flex justify-between gap-4">
+          <dt>Illustrative annual gross return</dt>
+          <dd className="whitespace-nowrap tabular-nums">{formatPence(scenario.totalReturnPence)}</dd>
+        </div>
+      </dl>
+      <table className="mt-3 w-full border-collapse text-left text-sm text-ink">
+        <caption className="sr-only">Allocation by loan</caption>
+        <thead className="text-xs text-slate-500">
+          <tr className="border-b border-slate-200">
+            <th scope="col" className="py-1.5 pr-2 font-medium">
+              Loan
+            </th>
+            <th scope="col" className="py-1.5 pr-2 text-right font-medium">
+              Amount
+            </th>
+            <th scope="col" className="py-1.5 pr-2 text-right font-medium">
+              Share
+            </th>
+            <th scope="col" className="py-1.5 text-right font-medium">
+              Return
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {scenario.rows.map((row) => (
+            <tr key={row.loanId} className="border-b border-slate-100 align-top">
+              <th scope="row" className="py-2 pr-2 font-semibold break-words">
+                {row.title}
+              </th>
+              {row.included ? (
+                <>
+                  <td className="py-2 pr-2 text-right whitespace-nowrap tabular-nums">
+                    {formatPence(row.pounds * 100)}
+                  </td>
+                  <td className="py-2 pr-2 text-right whitespace-nowrap tabular-nums">
+                    {formatShare(row.shareTenths)}
+                  </td>
+                  <td className="py-2 text-right whitespace-nowrap tabular-nums">
+                    {formatPence(row.returnPence)}
+                  </td>
+                </>
+              ) : (
+                <td colSpan={3} className="py-2 text-right text-slate-600">
+                  Not included
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

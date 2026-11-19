@@ -78,6 +78,8 @@ describe('Investment Copilot', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Calculated result' })).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Allocation by loan' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Amount' })).toBeInTheDocument();
     expect(screen.getByText(/could not be verified/)).toBeInTheDocument();
     expect(screen.queryByText(/£1,234.00/)).not.toBeInTheDocument();
   });
