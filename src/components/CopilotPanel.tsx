@@ -192,7 +192,15 @@ export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps
         </button>
       </form>
       <div aria-live="polite" className="mt-4">
-        {loading ? <p className="text-sm text-slate-600">Calculating the scenario.</p> : null}
+        {loading ? (
+          <p className="text-sm text-slate-600">
+            <span className="sr-only">Calculating the scenario.</span>
+            <span aria-hidden="true">
+              Calculating the scenario
+              <span className="copilot-ellipsis">...</span>
+            </span>
+          </p>
+        ) : null}
         {error ? (
           <p role="alert" className="text-sm text-red-800">
             {error}

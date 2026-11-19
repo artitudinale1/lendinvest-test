@@ -10,3 +10,26 @@
   --color-mint: #e7f6f2;
   --color-ice: #e8f1fb;
 }
+
+@keyframes copilot-ellipsis {
+  0% {
+    width: 0;
+  }
+  100% {
+    width: 3ch;
+  }
+}
+
+.copilot-ellipsis {
+  display: inline-block;
+  width: 3ch;
+  overflow: hidden;
+  vertical-align: bottom;
+  animation: copilot-ellipsis 1.2s steps(4, end) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copilot-ellipsis {
+    animation: none;
+  }
+}

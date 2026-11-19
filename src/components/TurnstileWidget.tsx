@@ -30,6 +30,7 @@ export function TurnstileWidget({
       if (!active || !containerRef.current || !window.turnstile || widgetId) return;
       widgetId = window.turnstile.render(containerRef.current, {
         sitekey: siteKey,
+        appearance: 'interaction-only',
         callback: (token: string) => {
           if (active) onToken(token);
         },
