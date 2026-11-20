@@ -42,6 +42,35 @@ describe('Investment Copilot', () => {
     expect(screen.getByText('£55,723')).toBeInTheDocument();
   });
 
+  it('sends the selected free model and starts on automatic', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        intent: { type: 'explain_allocation' },
+        explanation: null,
+        notice: 'The language model is unavailable. The figures above are calculated from the scenario.',
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Investment Lab' }));
+    const model = screen.getByLabelText('Model');
+    expect(model).toHaveValue('openrouter/free');
+    expect(model).toBeEnabled();
+    expect(screen.getByRole('option', { name: 'Automatic (free)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Nemotron 3.5 Super' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Particle-1' })).toBeInTheDocument();
+
+    await user.selectOptions(model, 'particle-ai/particle-1:free');
+    await user.type(screen.getByLabelText('Ask about this scenario'), 'What is my return?');
+    await user.click(screen.getByRole('button', { name: 'Ask' }));
+
+    expect(await screen.findByRole('heading', { name: 'Calculated result' })).toBeInTheDocument();
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body)) as { model: string };
+    expect(body.model).toBe('particle-ai/particle-1:free');
+  });
+
   it('keeps the form unchanged when the copilot is unavailable', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
     const user = userEvent.setup();

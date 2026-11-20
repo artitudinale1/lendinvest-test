@@ -22,6 +22,8 @@ describe('Investment Copilot public demo', () => {
 
     await user.click(screen.getByRole('button', { name: 'Investment Lab' }));
     expect(screen.getByText(/Public demo/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Model')).toHaveValue('openrouter/free');
+    expect(screen.getByLabelText('Model')).toBeDisabled();
 
     await user.click(
       screen.getByRole('button', { name: 'Explain my current investment allocation.' }),

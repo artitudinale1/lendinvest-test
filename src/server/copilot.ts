@@ -8,6 +8,7 @@ import {
   resolveIntent,
   type CopilotIntent,
 } from '../copilot';
+import { allowedCopilotModel, DEFAULT_COPILOT_MODEL, type CopilotModelId } from '../copilotModels';
 import { createCatalogue } from '../lab';
 import { type Completion } from './provider';
 
@@ -74,6 +75,7 @@ export async function handleCopilotRequest(
         system: `${INTENT_SYSTEM}\nLoans:\n${catalogueForPrompt(catalogue)}`,
         user: parsed.question,
         timeoutMs: PROVIDER_TIMEOUT_MS,
+        model: parsed.model,
       });
       intent = parseIntent(parseModelJson(raw));
     } catch (error) {
@@ -105,6 +107,7 @@ export async function handleCopilotRequest(
       system: EXPLANATION_SYSTEM,
       user: JSON.stringify({ question: parsed.question, facts: resolved.lines }),
       timeoutMs: PROVIDER_TIMEOUT_MS,
+      model: parsed.model,
     });
     const explanation = raw.trim().slice(0, 1200);
     if (explanation !== '' && explanationMatchesFacts(explanation, resolved.lines)) {
@@ -136,7 +139,13 @@ export async function handleCopilotRequest(
 function parseRequest(
   body: unknown,
 ):
-  | { ok: true; question: string; budget: string; allocations: Record<string, string> }
+  | {
+      ok: true;
+      question: string;
+      budget: string;
+      allocations: Record<string, string>;
+      model: CopilotModelId;
+    }
   | { ok: false; error: string } {
   if (!body || typeof body !== 'object') {
     return { ok: false, error: 'Enter a question about this scenario.' };
@@ -162,7 +171,14 @@ function parseRequest(
     }
     allocations[key] = value;
   }
-  return { ok: true, question, budget: record.budget, allocations };
+  if (!('model' in record) || record.model === undefined) {
+    return { ok: true, question, budget: record.budget, allocations, model: DEFAULT_COPILOT_MODEL };
+  }
+  const model = allowedCopilotModel(record.model);
+  if (!model) {
+    return { ok: false, error: 'Choose a supported model.' };
+  }
+  return { ok: true, question, budget: record.budget, allocations, model };
 }
 
 function parseModelJson(text: string): unknown {
