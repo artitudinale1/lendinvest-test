@@ -2,6 +2,7 @@ export type CompletionRequest = {
   system: string;
   user: string;
   timeoutMs: number;
+  model: string;
 };
 
 export type Completion = (request: CompletionRequest) => Promise<string>;
@@ -16,13 +17,13 @@ export function createCompletion(env: ProviderEnv): Completion | null {
     return null;
   }
   const apiKey = env.COPILOT_API_KEY?.trim();
-  const model = env.COPILOT_MODEL?.trim();
-  if (!apiKey || !model) {
+  const configuredModel = env.COPILOT_MODEL?.trim();
+  if (!apiKey || !configuredModel) {
     return null;
   }
   const base = (env.COPILOT_BASE_URL?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
 
-  return async ({ system, user, timeoutMs }) => {
+  return async ({ system, user, timeoutMs, model }) => {
     let response: Response;
     try {
       response = await fetch(`${base}/chat/completions`, {

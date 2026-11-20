@@ -11,6 +11,7 @@ import {
   type CopilotIntent,
 } from '../copilot';
 import { isStaticCopilotDemo } from '../copilotDemo';
+import { allowedCopilotModel, COPILOT_MODELS, DEFAULT_COPILOT_MODEL } from '../copilotModels';
 import { TURNSTILE_CANCELLED, TurnstileWidget, type TurnstileHandle } from './TurnstileWidget';
 import {
   createCatalogue,
@@ -39,12 +40,15 @@ type PendingRequest = {
   question: string;
   budget: string;
   allocations: Record<string, string>;
+  model: string;
 };
 
 export function CopilotPanel({ budget, allocations, onApply, labActive }: CopilotPanelProps) {
   const questionId = useId();
+  const modelId = useId();
   const previewRef = useRef<HTMLHeadingElement>(null);
   const [question, setQuestion] = useState('');
+  const [model, setModel] = useState(DEFAULT_COPILOT_MODEL);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [answer, setAnswer] = useState<Answer | null>(null);
@@ -96,6 +100,7 @@ export function CopilotPanel({ budget, allocations, onApply, labActive }: Copilo
       question: trimmed,
       budget,
       allocations: { ...allocations },
+      model,
     };
     const generation = generationRef.current;
     setQuestion(trimmed);
@@ -156,6 +161,7 @@ export function CopilotPanel({ budget, allocations, onApply, labActive }: Copilo
           question: pending.question,
           budget: pending.budget,
           allocations: pending.allocations,
+          model: pending.model,
           ...(token ? { turnstileToken: token } : {}),
         }),
       });
@@ -246,6 +252,27 @@ export function CopilotPanel({ budget, allocations, onApply, labActive }: Copilo
       {liveWorker && labActive && siteKey ? (
         <TurnstileWidget ref={turnstileRef} siteKey={siteKey} />
       ) : null}
+      <div className="mt-4">
+        <label htmlFor={modelId} className="text-sm font-medium text-ink">
+          Model
+        </label>
+        <select
+          id={modelId}
+          value={model}
+          disabled={loading || isStaticCopilotDemo()}
+          onChange={(event) => {
+            const next = allowedCopilotModel(event.target.value);
+            if (next) setModel(next);
+          }}
+          className="mt-2 min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-base text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand disabled:opacity-60"
+        >
+          {COPILOT_MODELS.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.label}
+            </option>
+          ))}
+        </select>
+      </div>
       <form
         className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end"
         onSubmit={(event) => {

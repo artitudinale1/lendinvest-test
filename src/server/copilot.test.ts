@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EXPLANATION_FALLBACK, MODEL_UNAVAILABLE } from '../copilot';
+import { COPILOT_MODELS, DEFAULT_COPILOT_MODEL } from '../copilotModels';
 import { handleCopilotRequest } from './copilot';
 import { createCompletion, type Completion } from './provider';
 import { copilotMiddleware } from './viteAdapter';
@@ -72,6 +73,47 @@ describe('copilot handler', () => {
     });
   });
 
+  it('sends every allowlisted model to both calls and rejects any other id', async () => {
+    const complete = vi.fn<Completion>(async ({ system }) =>
+      system.includes('classify')
+        ? '{"type":"explain_allocation"}'
+        : 'The illustrative annual gross return is £724.00.',
+    );
+
+    for (const item of COPILOT_MODELS) {
+      complete.mockClear();
+      const result = await handleCopilotRequest({ ...worked, model: item.id }, { complete });
+      expect(result.status).toBe(200);
+      expect(complete).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ model: item.id }),
+      );
+      expect(complete).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ model: item.id }),
+      );
+    }
+
+    complete.mockClear();
+    const missing = await handleCopilotRequest(worked, { complete });
+    expect(missing.status).toBe(200);
+    expect(complete).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ model: DEFAULT_COPILOT_MODEL }),
+    );
+    expect(complete).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ model: DEFAULT_COPILOT_MODEL }),
+    );
+
+    const rejected = await handleCopilotRequest(
+      { ...worked, model: 'openai/gpt-4o' },
+      { complete },
+    );
+    expect(rejected).toEqual({ status: 400, body: { error: 'Choose a supported model.' } });
+    expect(complete).toHaveBeenCalledTimes(2);
+  });
+
   it('returns calculated example facts when the provider is unavailable', async () => {
     const result = await handleCopilotRequest(worked, { complete: null });
 
@@ -138,11 +180,41 @@ describe('provider configuration', () => {
     });
 
     await expect(
-      complete?.({ system: 'classify', user: 'hello', timeoutMs: 1000 }),
+      complete?.({ system: 'classify', user: 'hello', timeoutMs: 1000, model: DEFAULT_COPILOT_MODEL }),
     ).rejects.toThrow('unavailable');
     await expect(
-      complete?.({ system: 'classify', user: 'hello', timeoutMs: 1000 }),
+      complete?.({ system: 'classify', user: 'hello', timeoutMs: 1000, model: DEFAULT_COPILOT_MODEL }),
     ).rejects.not.toThrow(/sk-test-secret/);
+    vi.unstubAllGlobals();
+  });
+
+  it('sends the selected model instead of the configured model name', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'ok' } }] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const complete = createCompletion({
+      COPILOT_PROVIDER: 'openai',
+      COPILOT_API_KEY: 'sk-test',
+      COPILOT_MODEL: 'gpt-test',
+      COPILOT_BASE_URL: 'https://openrouter.ai/api/v1',
+    });
+
+    await complete?.({
+      system: 'classify',
+      user: 'hello',
+      timeoutMs: 1000,
+      model: 'particle-ai/particle-1:free',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://openrouter.ai/api/v1/chat/completions',
+      expect.objectContaining({
+        body: expect.stringContaining('"model":"particle-ai/particle-1:free"'),
+      }),
+    );
+    expect(String(fetchMock.mock.calls[0][1].body)).not.toContain('gpt-test');
     vi.unstubAllGlobals();
   });
 });
