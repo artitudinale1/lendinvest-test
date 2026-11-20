@@ -64,7 +64,7 @@ When the lab is open and the Worker is configured, Cloudflare Turnstile runs inv
 
 ### Rate limits
 
-The Worker allows 3 Copilot questions per visitor in a 10-minute window and 15 questions per day. Each accepted question counts as two provider calls toward the daily budget. These limits are enforced after Siteverify. They are part of the Worker, not of the Pages build. The messages are “Too many Copilot questions. Please wait and try again.” and “The daily Copilot limit has been reached. Please try again tomorrow.”
+A visitor can ask 3 questions in a 10-minute window. The effective daily limit is 15 questions. The Worker stores that as 30 call slots, because each question reserves 2 slots (`DAILY_QUESTION_LIMIT` 15 × `CALLS_PER_QUESTION` 2) to cover intent classification and the explanation. A question reserves both slots after Siteverify succeeds, including when the explanation is not produced. The 16th question is rejected because it would exceed 30 slots. Questions rejected before Siteverify do not use the budget. These limits are part of the Worker, not of the Pages build. The messages are “Too many Copilot questions. Please wait and try again.” and “The daily Copilot limit has been reached. Please try again tomorrow.”
 
 ## Environment and deployment
 
@@ -108,7 +108,7 @@ Open [http://localhost:5173/lendinvest-test/](http://localhost:5173/lendinvest-t
 
 `.github/workflows/ci.yml` runs on pull requests and pushes. It installs with `npm ci`, then runs `npm test` and `npm run build`.
 
-A second job deploys only after that job passes, and only for a push to the default branch, `master`. It rebuilds with the Pages variables above and publishes `dist/` with the official GitHub Pages actions. The workflow does not deploy the Worker. GitHub branch protection is not enabled on `master`; the workflow is what gates the Pages deploy.
+The `master-protection` ruleset protects `master`. Changes require a pull request and a passing `verify` check. The ruleset blocks deleting the branch and force pushes. A second job deploys only after `verify` passes, and only for a push to `master`. It rebuilds with the Pages variables above and publishes `dist/` with the official GitHub Pages actions. The workflow does not deploy the Worker.
 
 ## Financial simulation disclaimer
 
