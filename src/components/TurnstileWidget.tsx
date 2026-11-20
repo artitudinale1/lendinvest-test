@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
-export type TurnstileStatus = 'verifying' | 'verified' | 'failed' | 'expired';
-
-export type TurnstileProblem = 'script' | 'challenge' | 'timeout' | null;
+type Waiter = (token: string | null) => void;
 
 type TurnstileApi = {
   render: (container: HTMLElement, options: Record<string, unknown>) => string;
+  reset: (widgetId: string) => void;
   remove: (widgetId: string) => void;
 };
 
@@ -20,40 +19,107 @@ const SCRIPT_SELECTOR = 'script[data-investlab-turnstile]';
 
 export const TURNSTILE_SCRIPT_TIMEOUT_MS = 15_000;
 
-export function TurnstileWidget({
-  siteKey,
-  onToken,
-  onStatus,
-}: {
-  siteKey: string;
-  onToken: (token: string) => void;
-  onStatus: (status: TurnstileStatus, problem?: TurnstileProblem) => void;
-}) {
+/** First failure plus two silent replacements. Expiry does not count. */
+export const TURNSTILE_RECOVERY_LIMIT = 2;
+
+export type TurnstileHandle = {
+  takeToken: () => Promise<string | null>;
+};
+
+export const TurnstileWidget = forwardRef<TurnstileHandle, { siteKey: string }>(function TurnstileWidget(
+  { siteKey },
+  ref,
+) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [status, setStatus] = useState<TurnstileStatus>('verifying');
-  const [problem, setProblem] = useState<TurnstileProblem>(null);
+  const tokenRef = useRef<string | null>(null);
+  const waitersRef = useRef<Waiter[]>([]);
+  const failuresRef = useRef(0);
+  const exhaustedRef = useRef(false);
+  const resetRef = useRef<() => void>(() => {});
   const [attempt, setAttempt] = useState(0);
+
+  const settleWaiters = (token: string | null) => {
+    const waiters = waitersRef.current;
+    waitersRef.current = [];
+    for (const waiter of waiters) waiter(token);
+  };
+
+  useImperativeHandle(ref, () => ({
+    takeToken() {
+      if (exhaustedRef.current) return Promise.resolve(null);
+      const ready = tokenRef.current?.trim() ?? '';
+      if (ready) {
+        tokenRef.current = null;
+        resetRef.current();
+        return Promise.resolve(ready);
+      }
+      return new Promise((resolve) => {
+        waitersRef.current.push(resolve);
+      });
+    },
+  }), []);
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || exhaustedRef.current) return;
 
     let active = true;
     let widgetId: string | null = null;
     let timeoutId = 0;
     let script: HTMLScriptElement | null = null;
+    let needsReset = false;
 
-    const publish = (next: TurnstileStatus, nextProblem: TurnstileProblem = null) => {
-      if (!active) return;
-      setStatus(next);
-      setProblem(nextProblem);
-      onStatus(next, nextProblem);
+    let issue = 0;
+    let storedIssue = 0;
+
+    const deliver = (token: string) => {
+      failuresRef.current = 0;
+      issue += 1;
+      storedIssue = issue;
+      const waiters = waitersRef.current;
+      if (waiters.length === 0) {
+        tokenRef.current = token;
+        return;
+      }
+      waitersRef.current = [];
+      tokenRef.current = null;
+      for (const waiter of waiters) waiter(token);
+      resetRef.current();
     };
 
-    const reject = (next: 'failed' | 'expired', nextProblem: TurnstileProblem = null) => {
-      if (!active) return;
-      onToken('');
-      publish(next, nextProblem);
+    const giveUp = () => {
+      if (!active || exhaustedRef.current) return;
+      exhaustedRef.current = true;
+      tokenRef.current = null;
+      settleWaiters(null);
+    };
+
+    const fail = (kind: 'widget' | 'script') => {
+      if (!active || exhaustedRef.current) return;
+      tokenRef.current = null;
+      failuresRef.current += 1;
+      if (failuresRef.current > TURNSTILE_RECOVERY_LIMIT) {
+        giveUp();
+        return;
+      }
+      if (kind === 'script') {
+        setAttempt((value) => value + 1);
+        return;
+      }
+      resetRef.current();
+    };
+
+    resetRef.current = () => {
+      if (!active || !widgetId || !window.turnstile) {
+        needsReset = true;
+        return;
+      }
+      needsReset = false;
+      try {
+        window.turnstile.reset(widgetId);
+      } catch {
+        fail('widget');
+      }
     };
 
     const renderWidget = () => {
@@ -63,39 +129,42 @@ export function TurnstileWidget({
       try {
         const id = window.turnstile.render(containerRef.current, {
           sitekey: siteKey,
-          appearance: 'always',
-          size: 'flexible',
-          theme: 'light',
           retry: 'never',
-          'refresh-expired': 'never',
+          'refresh-expired': 'auto',
           'refresh-timeout': 'never',
+          'response-field': false,
           callback: (token: unknown) => {
             if (!active) return;
             if (typeof token !== 'string' || token.trim() === '') {
-              reject('failed', 'challenge');
+              fail('widget');
               return;
             }
-            onToken(token.trim());
-            publish('verified');
+            deliver(token.trim());
           },
           'expired-callback': () => {
-            reject('expired');
+            if (!active) return;
+            const expiredIssue = storedIssue;
+            queueMicrotask(() => {
+              if (!active || storedIssue !== expiredIssue) return;
+              tokenRef.current = null;
+            });
           },
           'error-callback': () => {
-            reject('failed', 'challenge');
+            fail('widget');
             return true;
           },
           'timeout-callback': () => {
-            reject('failed', 'timeout');
+            fail('widget');
           },
         });
         if (!id) {
-          reject('failed', 'script');
+          fail('script');
           return;
         }
         widgetId = id;
+        if (needsReset) resetRef.current();
       } catch {
-        reject('failed', 'script');
+        fail('script');
       }
     };
 
@@ -108,7 +177,7 @@ export function TurnstileWidget({
       window.clearTimeout(timeoutId);
       if (!window.turnstile) {
         markScriptFailed();
-        reject('failed', 'script');
+        fail('script');
         return;
       }
       renderWidget();
@@ -118,11 +187,8 @@ export function TurnstileWidget({
       if (!active) return;
       window.clearTimeout(timeoutId);
       markScriptFailed();
-      reject('failed', 'script');
+      fail('script');
     };
-
-    publish('verifying');
-    onToken('');
 
     if (window.turnstile) {
       const existing = document.querySelector<HTMLScriptElement>(SCRIPT_SELECTOR);
@@ -135,7 +201,7 @@ export function TurnstileWidget({
       timeoutId = window.setTimeout(() => {
         if (!active || widgetId) return;
         markScriptFailed();
-        reject('failed', 'script');
+        fail('script');
       }, TURNSTILE_SCRIPT_TIMEOUT_MS);
       if (!script.parentNode) document.head.appendChild(script);
       if (window.turnstile) onLoad();
@@ -143,6 +209,7 @@ export function TurnstileWidget({
 
     return () => {
       active = false;
+      resetRef.current = () => {};
       window.clearTimeout(timeoutId);
       script?.removeEventListener('load', onLoad);
       script?.removeEventListener('error', onError);
@@ -154,38 +221,10 @@ export function TurnstileWidget({
         }
       }
     };
-  }, [attempt, onStatus, onToken, siteKey]);
+  }, [attempt, siteKey]);
 
-  const needsRetry = status === 'failed' || status === 'expired';
-
-  return (
-    <div role="group" aria-label="Security verification" className="max-w-full">
-      <div
-        ref={containerRef}
-        className="min-h-[65px] w-full max-w-[300px]"
-        aria-busy={status === 'verifying' || undefined}
-      />
-      <p
-        role="status"
-        data-verification-status={status}
-        className={
-          needsRetry ? 'mt-2 text-sm text-red-800' : 'mt-2 text-sm text-slate-600'
-        }
-      >
-        {statusLabel(status, problem)}
-      </p>
-      {needsRetry ? (
-        <button
-          type="button"
-          onClick={() => setAttempt((value) => value + 1)}
-          className="mt-2 inline-flex min-h-11 items-center justify-center rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-        >
-          Retry verification
-        </button>
-      ) : null}
-    </div>
-  );
-}
+  return <div ref={containerRef} aria-hidden="true" />;
+});
 
 function scriptElement(): HTMLScriptElement {
   const existing = document.querySelector<HTMLScriptElement>(SCRIPT_SELECTOR);
@@ -196,13 +235,4 @@ function scriptElement(): HTMLScriptElement {
   script.async = true;
   script.dataset.investlabTurnstile = 'true';
   return script;
-}
-
-function statusLabel(status: TurnstileStatus, problem: TurnstileProblem): string {
-  if (status === 'verifying') return 'Verifying';
-  if (status === 'verified') return 'Verified';
-  if (status === 'expired') return 'Verification expired';
-  if (problem === 'script') return 'Verification failed. The security check could not be loaded.';
-  if (problem === 'timeout') return 'Verification failed. The security check timed out.';
-  return 'Verification failed';
 }
