@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   EXAMPLE_QUESTIONS,
   EXPLANATION_FALLBACK,
@@ -11,7 +11,7 @@ import {
   type CopilotIntent,
 } from '../copilot';
 import { isStaticCopilotDemo } from '../copilotDemo';
-import { TurnstileWidget } from './TurnstileWidget';
+import { TurnstileWidget, type TurnstileProblem, type TurnstileStatus } from './TurnstileWidget';
 import {
   createCatalogue,
   formatPence,
@@ -25,6 +25,7 @@ type CopilotPanelProps = {
   budget: string;
   allocations: Record<string, string>;
   onApply: (budget: string, allocations: Record<string, string>) => void;
+  labActive: boolean;
 };
 
 type Answer = {
@@ -34,7 +35,7 @@ type Answer = {
   signature: string;
 };
 
-export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps) {
+export function CopilotPanel({ budget, allocations, onApply, labActive }: CopilotPanelProps) {
   const questionId = useId();
   const previewRef = useRef<HTMLHeadingElement>(null);
   const [question, setQuestion] = useState('');
@@ -42,8 +43,14 @@ export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps
   const [error, setError] = useState<string | null>(null);
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [turnstileToken, setTurnstileToken] = useState('');
+  const [turnstileStatus, setTurnstileStatus] = useState<TurnstileStatus>('verifying');
+  const [turnstileProblem, setTurnstileProblem] = useState<TurnstileProblem>(null);
   const [challengeVersion, setChallengeVersion] = useState(0);
   const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
+  const handleTurnstileStatus = useCallback((status: TurnstileStatus, problem: TurnstileProblem = null) => {
+    setTurnstileStatus(status);
+    setTurnstileProblem(problem);
+  }, []);
   const liveWorker = !isStaticCopilotDemo() && Boolean(import.meta.env.VITE_COPILOT_API_URL);
   const signature = `${budget}\n${JSON.stringify(allocations)}`;
   const visible = answer?.signature === signature ? answer : null;
@@ -65,13 +72,20 @@ export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps
     }
   }, [previewKey]);
 
+  useEffect(() => {
+    if (labActive) return;
+    setTurnstileToken('');
+    setTurnstileStatus('verifying');
+    setTurnstileProblem(null);
+  }, [labActive]);
+
   async function ask(nextQuestion: string) {
     const trimmed = nextQuestion.trim();
     if (trimmed === '' || loading) {
       return;
     }
-    if (liveWorker && !turnstileToken) {
-      setError('Complete the security verification before asking.');
+    if (liveWorker && (turnstileStatus !== 'verified' || turnstileToken.trim() === '')) {
+      setError(verificationBlockedMessage(turnstileStatus, turnstileProblem, Boolean(siteKey)));
       return;
     }
     setQuestion(trimmed);
@@ -120,6 +134,8 @@ export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps
     } finally {
       if (liveWorker) {
         setTurnstileToken('');
+        setTurnstileStatus('verifying');
+        setTurnstileProblem(null);
         setChallengeVersion((version) => version + 1);
       }
       setLoading(false);
@@ -162,10 +178,20 @@ export function CopilotPanel({ budget, allocations, onApply }: CopilotPanelProps
           </button>
         ))}
       </div>
-      {liveWorker && siteKey ? (
+      {liveWorker && labActive && siteKey ? (
         <div className="mt-4">
-          <TurnstileWidget key={challengeVersion} siteKey={siteKey} onToken={setTurnstileToken} />
+          <TurnstileWidget
+            key={challengeVersion}
+            siteKey={siteKey}
+            onToken={setTurnstileToken}
+            onStatus={handleTurnstileStatus}
+          />
         </div>
+      ) : null}
+      {liveWorker && labActive && !siteKey ? (
+        <p role="status" data-verification-status="failed" className="mt-4 text-sm text-red-800">
+          Verification failed. The security check could not be loaded.
+        </p>
       ) : null}
       <form
         className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end"
@@ -352,6 +378,26 @@ function ScenarioFacts({ scenario }: { scenario: Scenario }) {
       </table>
     </div>
   );
+}
+
+function verificationBlockedMessage(
+  status: TurnstileStatus,
+  problem: TurnstileProblem,
+  hasSiteKey: boolean,
+): string {
+  if (!hasSiteKey || problem === 'script') {
+    return 'Security verification could not be loaded. Try again.';
+  }
+  if (problem === 'timeout') {
+    return 'Security verification timed out. Try again before asking.';
+  }
+  if (status === 'failed') {
+    return 'Security verification failed. Try again before asking.';
+  }
+  if (status === 'expired') {
+    return 'Security verification expired. Verify again before asking.';
+  }
+  return 'Complete the security verification before asking.';
 }
 
 function errorMessage(payload: unknown): string {
