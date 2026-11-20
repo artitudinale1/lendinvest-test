@@ -1,5 +1,5 @@
 import { createRef } from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
@@ -241,6 +241,62 @@ describe('Invisible Turnstile', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent('Investment Copilot is unavailable.');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('hides Turnstile 403 instructions and keeps rate-limit messages', async () => {
+    const responses = [
+      { status: 403, error: 'Complete the verification check before asking.' },
+      { status: 403, error: 'The verification check expired. Please try again.' },
+      { status: 403, error: 'The verification check failed. Please try again.' },
+      { status: 403, error: 'Investment Copilot is unavailable.' },
+      { status: 429, error: 'The daily Copilot limit has been reached. Please try again tomorrow.' },
+      { status: 429, error: 'Too many Copilot questions. Please wait and try again.' },
+    ];
+    let responseIndex = 0;
+    const fetchMock = vi.fn(async () => {
+      const next = responses[responseIndex];
+      responseIndex += 1;
+      return {
+        ok: false,
+        status: next.status,
+        json: async () => ({ error: next.error }),
+      } as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    enableLiveCopilot();
+    let options: Record<string, unknown> | null = null;
+    const turnstile = installTurnstile((next) => {
+      options = next;
+      (next.callback as (token: string) => void)('server-token');
+    });
+    turnstile.reset.mockImplementation(() => {
+      (options?.callback as (token: string) => void)('server-token');
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Investment Lab' }));
+    await user.type(screen.getByLabelText('Ask about this scenario'), 'What is my return?');
+
+    const expectedMessages = [
+      'Investment Copilot could not accept that question. Please try again.',
+      'Investment Copilot could not accept that question. Please try again.',
+      'Investment Copilot could not accept that question. Please try again.',
+      'Investment Copilot is unavailable.',
+      'The daily Copilot limit has been reached. Please try again tomorrow.',
+      'Too many Copilot questions. Please wait and try again.',
+    ];
+    for (const [index, expected] of expectedMessages.entries()) {
+      await user.click(screen.getByRole('button', { name: 'Ask' }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(index + 1));
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent(expected);
+      expect(alert).not.toHaveTextContent(/verification check/i);
+      expect(alert).not.toHaveTextContent(/Complete the/i);
+      expect(screen.getByRole('button', { name: 'Ask' })).toBeEnabled();
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
   it('settles a pending token request when the widget unmounts', async () => {

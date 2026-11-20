@@ -176,7 +176,7 @@ export function CopilotPanel({ budget, allocations, onApply, labActive }: Copilo
   async function applyCopilotResponse(response: Response, submittedSignature: string) {
     const payload: unknown = await response.json();
     if (!response.ok) {
-      setError(errorMessage(payload));
+      setError(errorMessage(payload, response.status));
       return;
     }
     const intent = parseIntent(payload && typeof payload === 'object' ? (payload as { intent?: unknown }).intent : null);
@@ -437,9 +437,19 @@ function copilotUrl(): string {
   return `${import.meta.env.VITE_COPILOT_API_URL?.replace(/\/$/, '') ?? ''}/api/copilot`;
 }
 
-function errorMessage(payload: unknown): string {
-  if (payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string') {
-    return (payload as { error: string }).error;
+const VERIFICATION_FAILURES = new Set([
+  'Complete the verification check before asking.',
+  'The verification check expired. Please try again.',
+  'The verification check failed. Please try again.',
+]);
+
+function errorMessage(payload: unknown, status: number): string {
+  const message =
+    payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string'
+      ? (payload as { error: string }).error
+      : 'Investment Copilot is unavailable.';
+  if (status === 403 && VERIFICATION_FAILURES.has(message)) {
+    return 'Investment Copilot could not accept that question. Please try again.';
   }
-  return 'Investment Copilot is unavailable.';
+  return message;
 }
