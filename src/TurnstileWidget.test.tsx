@@ -1,8 +1,14 @@
+import { createRef } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { TURNSTILE_SCRIPT_TIMEOUT_MS } from './components/TurnstileWidget';
+import {
+  TURNSTILE_CANCELLED,
+  TURNSTILE_SCRIPT_TIMEOUT_MS,
+  TurnstileWidget,
+  type TurnstileHandle,
+} from './components/TurnstileWidget';
 
 const PASS_KEY = '1x00000000000000000000BB';
 const FAIL_KEY = '2x00000000000000000000BB';
@@ -236,6 +242,146 @@ describe('Invisible Turnstile', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Investment Copilot is unavailable.');
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('settles a pending token request when the widget unmounts', async () => {
+    installTurnstile(() => {});
+    const ref = createRef<TurnstileHandle>();
+    const view = render(<TurnstileWidget ref={ref} siteKey={PASS_KEY} />);
+    const pending = ref.current?.takeToken();
+    if (!pending) throw new Error('Missing Turnstile handle');
+
+    view.unmount();
+
+    await expect(pending).resolves.toBe(TURNSTILE_CANCELLED);
+  });
+
+  it('cancels a waiting question when the lab closes and does not submit afterwards', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchMock = stubCopilotFetch();
+    const renders: Record<string, unknown>[] = [];
+    installTurnstile((next) => {
+      renders.push(next);
+    });
+    const turnstile = window.turnstile;
+    if (!turnstile) throw new Error('Missing Turnstile mock');
+    turnstile.remove = vi.fn(() => {
+      (renders.at(-1)?.callback as (token: string) => void)('stale-token');
+    });
+    const user = userEvent.setup();
+    const view = render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Investment Lab' }));
+    await user.type(screen.getByLabelText('Ask about this scenario'), 'What is my return?');
+    await user.click(screen.getByRole('button', { name: 'Ask' }));
+
+    expect(screen.getByRole('button', { name: 'Calculating' })).toBeDisabled();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Current Loans' }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert', { hidden: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Calculating', hidden: true })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Investment Lab' }));
+    expect(screen.getByRole('button', { name: 'Ask' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Ask' }));
+    await act(async () => {
+      (renders.at(-1)?.callback as (token: string) => void)('next-token');
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][1].body)).toContain('"turnstileToken":"next-token"');
+    expect(String(fetchMock.mock.calls[0][1].body)).not.toContain('stale-token');
+    expectNoVerificationUi();
+
+    await user.click(screen.getByRole('button', { name: 'Ask' }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    view.unmount();
+    await act(async () => {
+      (renders.at(-1)?.callback as (token: string) => void)('after-unmount-token');
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(errors.mock.calls.flat().join(' ')).not.toMatch(/unmounted|state update/i);
+  });
+
+  it('submits one waiting question after an invisible check, then handles expiry, retry, and failure', async () => {
+    const fetchMock = stubCopilotFetch(PASS_KEY);
+    let options: Record<string, unknown> | null = null;
+    installTurnstile((next) => {
+      options = next;
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Investment Lab' }));
+
+    const rendered = turnstileOptions(options);
+    expect(rendered.sitekey).toBe(PASS_KEY);
+    expect(rendered).not.toHaveProperty('appearance');
+    expect(rendered).not.toHaveProperty('execution');
+    expectNoVerificationUi();
+    expect(screen.getByRole('link', { name: 'Turnstile Privacy Addendum' })).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('Ask about this scenario'), 'What is my return?');
+    await user.click(screen.getByRole('button', { name: 'Ask' }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expectNoVerificationUi();
+
+    await act(async () => {
+      turnstileCallback(options, 'callback')('pass-token');
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Calculated result' })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][1].body)).toContain('"turnstileToken":"pass-token"');
+    expect(document.body.textContent).not.toContain('pass-token');
+    expectNoVerificationUi();
+
+    await act(async () => {
+      turnstileCallback(options, 'callback')('expiring-token');
+      turnstileCallback(options, 'expired-callback')();
+      turnstileCallback(options, 'callback')('renewed-token');
+    });
+    await user.click(screen.getByRole('button', { name: 'Ask' }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const renewed = String(fetchMock.mock.calls[1][1].body);
+    expect(renewed).toContain('"turnstileToken":"renewed-token"');
+    expect(renewed).not.toContain('expiring-token');
+    expect(screen.queryByText(/expired/i)).not.toBeInTheDocument();
+    expectNoVerificationUi();
+
+    await user.click(screen.getByRole('button', { name: 'Ask' }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const recovered = turnstileCallback(options, 'error-callback')();
+    expect(recovered).toBe(true);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expectNoVerificationUi();
+    await act(async () => {
+      turnstileCallback(options, 'callback')('retry-token');
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[2][1].body)).toContain('"turnstileToken":"retry-token"');
+    expectNoVerificationUi();
+
+    await act(async () => {
+      turnstileCallback(options, 'error-callback')();
+      turnstileCallback(options, 'error-callback')();
+      turnstileCallback(options, 'error-callback')();
+    });
+    await user.click(screen.getByRole('button', { name: 'Ask' }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Investment Copilot is unavailable.');
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/verif/i);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(screen.queryByRole('button', { name: 'Retry verification' })).not.toBeInTheDocument();
+    expectNoVerificationUi();
+  });
 });
 
 function enableLiveCopilot(siteKey = PASS_KEY) {
@@ -244,8 +390,8 @@ function enableLiveCopilot(siteKey = PASS_KEY) {
   vi.stubEnv('VITE_COPILOT_DEMO', '');
 }
 
-function stubCopilotFetch() {
-  enableLiveCopilot();
+function stubCopilotFetch(siteKey = PASS_KEY) {
+  enableLiveCopilot(siteKey);
   const fetchMock = vi.fn().mockResolvedValue({
     ok: true,
     json: async () => ({
@@ -274,6 +420,26 @@ function installTurnstile(
   const remove = vi.fn();
   window.turnstile = { render, reset, remove };
   return { render, reset, remove };
+}
+
+function turnstileOptions(options: Record<string, unknown> | null): Record<string, unknown> {
+  if (!options) throw new Error('Missing Turnstile render options');
+  return options;
+}
+
+function turnstileCallback(options: Record<string, unknown> | null, name: string): (...args: string[]) => boolean {
+  const callback = turnstileOptions(options)[name];
+  if (typeof callback !== 'function') throw new Error(`Missing Turnstile ${name}`);
+  return callback as (...args: string[]) => boolean;
+}
+
+function expectNoVerificationUi() {
+  expect(screen.queryByRole('group', { name: 'Security verification' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry verification' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  expect(screen.queryByText('Verifying')).not.toBeInTheDocument();
+  expect(screen.queryByText(/Complete the security/)).not.toBeInTheDocument();
+  expect(document.querySelector('iframe')).toBeNull();
 }
 
 function watchConsole() {

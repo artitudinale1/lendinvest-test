@@ -1,6 +1,10 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
-type Waiter = (token: string | null) => void;
+export const TURNSTILE_CANCELLED = Symbol('turnstile-cancelled');
+
+export type TurnstileTokenResult = string | null | typeof TURNSTILE_CANCELLED;
+
+type Waiter = (token: TurnstileTokenResult) => void;
 
 type TurnstileApi = {
   render: (container: HTMLElement, options: Record<string, unknown>) => string;
@@ -23,7 +27,7 @@ export const TURNSTILE_SCRIPT_TIMEOUT_MS = 15_000;
 export const TURNSTILE_RECOVERY_LIMIT = 2;
 
 export type TurnstileHandle = {
-  takeToken: () => Promise<string | null>;
+  takeToken: () => Promise<TurnstileTokenResult>;
 };
 
 export const TurnstileWidget = forwardRef<TurnstileHandle, { siteKey: string }>(function TurnstileWidget(
@@ -35,6 +39,7 @@ export const TurnstileWidget = forwardRef<TurnstileHandle, { siteKey: string }>(
   const waitersRef = useRef<Waiter[]>([]);
   const failuresRef = useRef(0);
   const exhaustedRef = useRef(false);
+  const aliveRef = useRef(true);
   const resetRef = useRef<() => void>(() => {});
   const [attempt, setAttempt] = useState(0);
 
@@ -73,6 +78,7 @@ export const TurnstileWidget = forwardRef<TurnstileHandle, { siteKey: string }>(
     let storedIssue = 0;
 
     const deliver = (token: string) => {
+      if (!aliveRef.current) return;
       failuresRef.current = 0;
       issue += 1;
       storedIssue = issue;
@@ -88,14 +94,14 @@ export const TurnstileWidget = forwardRef<TurnstileHandle, { siteKey: string }>(
     };
 
     const giveUp = () => {
-      if (!active || exhaustedRef.current) return;
+      if (!active || !aliveRef.current || exhaustedRef.current) return;
       exhaustedRef.current = true;
       tokenRef.current = null;
       settleWaiters(null);
     };
 
     const fail = (kind: 'widget' | 'script') => {
-      if (!active || exhaustedRef.current) return;
+      if (!active || !aliveRef.current || exhaustedRef.current) return;
       tokenRef.current = null;
       failuresRef.current += 1;
       if (failuresRef.current > TURNSTILE_RECOVERY_LIMIT) {
@@ -142,10 +148,10 @@ export const TurnstileWidget = forwardRef<TurnstileHandle, { siteKey: string }>(
             deliver(token.trim());
           },
           'expired-callback': () => {
-            if (!active) return;
+            if (!active || !aliveRef.current) return;
             const expiredIssue = storedIssue;
             queueMicrotask(() => {
-              if (!active || storedIssue !== expiredIssue) return;
+              if (!active || !aliveRef.current || storedIssue !== expiredIssue) return;
               tokenRef.current = null;
             });
           },
@@ -222,6 +228,20 @@ export const TurnstileWidget = forwardRef<TurnstileHandle, { siteKey: string }>(
       }
     };
   }, [attempt, siteKey]);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      queueMicrotask(() => {
+        if (aliveRef.current) return;
+        tokenRef.current = null;
+        const waiters = waitersRef.current;
+        waitersRef.current = [];
+        for (const waiter of waiters) waiter(TURNSTILE_CANCELLED);
+      });
+    };
+  }, []);
 
   return <div ref={containerRef} aria-hidden="true" />;
 });

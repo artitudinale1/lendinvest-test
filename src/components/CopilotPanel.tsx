@@ -11,7 +11,7 @@ import {
   type CopilotIntent,
 } from '../copilot';
 import { isStaticCopilotDemo } from '../copilotDemo';
-import { TurnstileWidget, type TurnstileHandle } from './TurnstileWidget';
+import { TURNSTILE_CANCELLED, TurnstileWidget, type TurnstileHandle } from './TurnstileWidget';
 import {
   createCatalogue,
   formatPence,
@@ -117,6 +117,11 @@ export function CopilotPanel({ budget, allocations, onApply, labActive }: Copilo
     setAnswer(null);
     const token = await turnstileRef.current.takeToken();
     if (!mountedRef.current || generation !== generationRef.current) return;
+    if (token === TURNSTILE_CANCELLED) {
+      inFlightRef.current = false;
+      setLoading(false);
+      return;
+    }
     if (!token) {
       setError('Investment Copilot is unavailable.');
       inFlightRef.current = false;
