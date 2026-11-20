@@ -213,6 +213,7 @@ export function InvestmentLab({ view, onViewChange, headingRef }: InvestmentLabP
         <CopilotPanel
           budget={budget}
           allocations={allocations}
+          labActive={view === 'lab'}
           onApply={(nextBudget, nextAllocations) => {
             setBudget(nextBudget);
             setAllocations(nextAllocations);
