@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   EXAMPLE_QUESTIONS,
   EXPLANATION_FALLBACK,
@@ -11,7 +11,7 @@ import {
   type CopilotIntent,
 } from '../copilot';
 import { isStaticCopilotDemo } from '../copilotDemo';
-import { TurnstileWidget, type TurnstileProblem, type TurnstileStatus } from './TurnstileWidget';
+import { TURNSTILE_CANCELLED, TurnstileWidget, type TurnstileHandle } from './TurnstileWidget';
 import {
   createCatalogue,
   formatPence,
@@ -35,6 +35,12 @@ type Answer = {
   signature: string;
 };
 
+type PendingRequest = {
+  question: string;
+  budget: string;
+  allocations: Record<string, string>;
+};
+
 export function CopilotPanel({ budget, allocations, onApply, labActive }: CopilotPanelProps) {
   const questionId = useId();
   const previewRef = useRef<HTMLHeadingElement>(null);
@@ -42,15 +48,11 @@ export function CopilotPanel({ budget, allocations, onApply, labActive }: Copilo
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [answer, setAnswer] = useState<Answer | null>(null);
-  const [turnstileToken, setTurnstileToken] = useState('');
-  const [turnstileStatus, setTurnstileStatus] = useState<TurnstileStatus>('verifying');
-  const [turnstileProblem, setTurnstileProblem] = useState<TurnstileProblem>(null);
-  const [challengeVersion, setChallengeVersion] = useState(0);
+  const mountedRef = useRef(true);
+  const inFlightRef = useRef(false);
+  const generationRef = useRef(0);
+  const turnstileRef = useRef<TurnstileHandle>(null);
   const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
-  const handleTurnstileStatus = useCallback((status: TurnstileStatus, problem: TurnstileProblem = null) => {
-    setTurnstileStatus(status);
-    setTurnstileProblem(problem);
-  }, []);
   const liveWorker = !isStaticCopilotDemo() && Boolean(import.meta.env.VITE_COPILOT_API_URL);
   const signature = `${budget}\n${JSON.stringify(allocations)}`;
   const visible = answer?.signature === signature ? answer : null;
@@ -73,28 +75,68 @@ export function CopilotPanel({ budget, allocations, onApply, labActive }: Copilo
   }, [previewKey]);
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      generationRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
     if (labActive) return;
-    setTurnstileToken('');
-    setTurnstileStatus('verifying');
-    setTurnstileProblem(null);
+    generationRef.current += 1;
+    inFlightRef.current = false;
+    setLoading(false);
   }, [labActive]);
 
   async function ask(nextQuestion: string) {
     const trimmed = nextQuestion.trim();
-    if (trimmed === '' || loading) {
-      return;
-    }
-    if (liveWorker && (turnstileStatus !== 'verified' || turnstileToken.trim() === '')) {
-      setError(verificationBlockedMessage(turnstileStatus, turnstileProblem, Boolean(siteKey)));
-      return;
-    }
+    if (trimmed === '' || inFlightRef.current) return;
+    const pending: PendingRequest = {
+      question: trimmed,
+      budget,
+      allocations: { ...allocations },
+    };
+    const generation = generationRef.current;
     setQuestion(trimmed);
+    if (!liveWorker) {
+      inFlightRef.current = true;
+      setLoading(true);
+      setError(null);
+      setAnswer(null);
+      await submit(pending, null, generation);
+      return;
+    }
+    if (!siteKey || !turnstileRef.current) {
+      setError('Investment Copilot is unavailable.');
+      return;
+    }
+    inFlightRef.current = true;
     setLoading(true);
     setError(null);
     setAnswer(null);
+    const token = await turnstileRef.current.takeToken();
+    if (!mountedRef.current || generation !== generationRef.current) return;
+    if (token === TURNSTILE_CANCELLED) {
+      inFlightRef.current = false;
+      setLoading(false);
+      return;
+    }
+    if (!token) {
+      setError('Investment Copilot is unavailable.');
+      inFlightRef.current = false;
+      setLoading(false);
+      return;
+    }
+    await submit(pending, token, generation);
+  }
+
+  async function submit(pending: PendingRequest, token: string | null, generation: number) {
+    const submittedSignature = `${pending.budget}\n${JSON.stringify(pending.allocations)}`;
     try {
       if (isStaticCopilotDemo()) {
-        const intent = exampleIntent(trimmed);
+        const intent = exampleIntent(pending.question);
+        if (!mountedRef.current || generation !== generationRef.current) return;
         if (!intent) {
           setError('Investment Copilot is unavailable.');
           return;
@@ -103,43 +145,52 @@ export function CopilotPanel({ budget, allocations, onApply, labActive }: Copilo
           intent,
           explanation: null,
           notice: MODEL_UNAVAILABLE,
-          signature,
+          signature: submittedSignature,
         });
         return;
       }
-      const response = await fetch(`${import.meta.env.VITE_COPILOT_API_URL?.replace(/\/$/, '') ?? ''}/api/copilot`, {
+      const response = await fetch(copilotUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: trimmed, budget, allocations, ...(liveWorker ? { turnstileToken } : {}) }),
+        body: JSON.stringify({
+          question: pending.question,
+          budget: pending.budget,
+          allocations: pending.allocations,
+          ...(token ? { turnstileToken: token } : {}),
+        }),
       });
-      const payload: unknown = await response.json();
-      if (!response.ok) {
-        setError(errorMessage(payload));
-        return;
-      }
-      const intent = parseIntent(payload && typeof payload === 'object' ? (payload as { intent?: unknown }).intent : null);
-      if (!intent) {
-        setError('The copilot could not read that request.');
-        return;
-      }
-      const record = payload as { explanation?: unknown; notice?: unknown };
-      setAnswer({
-        intent,
-        explanation: typeof record.explanation === 'string' ? record.explanation : null,
-        notice: typeof record.notice === 'string' ? record.notice : null,
-        signature,
-      });
+      if (!mountedRef.current || generation !== generationRef.current) return;
+      await applyCopilotResponse(response, submittedSignature);
     } catch {
-      setError('Investment Copilot is unavailable.');
-    } finally {
-      if (liveWorker) {
-        setTurnstileToken('');
-        setTurnstileStatus('verifying');
-        setTurnstileProblem(null);
-        setChallengeVersion((version) => version + 1);
+      if (mountedRef.current && generation === generationRef.current) {
+        setError('Investment Copilot is unavailable.');
       }
-      setLoading(false);
+    } finally {
+      if (mountedRef.current && generation === generationRef.current) {
+        inFlightRef.current = false;
+        setLoading(false);
+      }
     }
+  }
+
+  async function applyCopilotResponse(response: Response, submittedSignature: string) {
+    const payload: unknown = await response.json();
+    if (!response.ok) {
+      setError(errorMessage(payload, response.status));
+      return;
+    }
+    const intent = parseIntent(payload && typeof payload === 'object' ? (payload as { intent?: unknown }).intent : null);
+    if (!intent) {
+      setError('The copilot could not read that request.');
+      return;
+    }
+    const record = payload as { explanation?: unknown; notice?: unknown };
+    setAnswer({
+      intent,
+      explanation: typeof record.explanation === 'string' ? record.explanation : null,
+      notice: typeof record.notice === 'string' ? record.notice : null,
+      signature: submittedSignature,
+    });
   }
 
   function applyPreview() {
@@ -166,6 +217,20 @@ export function CopilotPanel({ budget, allocations, onApply, labActive }: Copilo
           calculated figures.
         </p>
       ) : null}
+      {liveWorker ? (
+        <p className="mt-3 max-w-3xl text-xs leading-5 text-slate-500">
+          Cloudflare Turnstile protects this assistant from automated abuse.{' '}
+          <a
+            className="underline decoration-slate-300 underline-offset-2 hover:text-slate-700"
+            href="https://www.cloudflare.com/turnstile-privacy-policy/"
+            rel="noreferrer"
+            target="_blank"
+          >
+            Turnstile Privacy Addendum
+          </a>
+          .
+        </p>
+      ) : null}
       <div className="mt-4 flex flex-wrap gap-2">
         {EXAMPLE_QUESTIONS.map((item) => (
           <button
@@ -179,19 +244,7 @@ export function CopilotPanel({ budget, allocations, onApply, labActive }: Copilo
         ))}
       </div>
       {liveWorker && labActive && siteKey ? (
-        <div className="mt-4">
-          <TurnstileWidget
-            key={challengeVersion}
-            siteKey={siteKey}
-            onToken={setTurnstileToken}
-            onStatus={handleTurnstileStatus}
-          />
-        </div>
-      ) : null}
-      {liveWorker && labActive && !siteKey ? (
-        <p role="status" data-verification-status="failed" className="mt-4 text-sm text-red-800">
-          Verification failed. The security check could not be loaded.
-        </p>
+        <TurnstileWidget ref={turnstileRef} siteKey={siteKey} />
       ) : null}
       <form
         className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end"
@@ -380,29 +433,23 @@ function ScenarioFacts({ scenario }: { scenario: Scenario }) {
   );
 }
 
-function verificationBlockedMessage(
-  status: TurnstileStatus,
-  problem: TurnstileProblem,
-  hasSiteKey: boolean,
-): string {
-  if (!hasSiteKey || problem === 'script') {
-    return 'Security verification could not be loaded. Try again.';
-  }
-  if (problem === 'timeout') {
-    return 'Security verification timed out. Try again before asking.';
-  }
-  if (status === 'failed') {
-    return 'Security verification failed. Try again before asking.';
-  }
-  if (status === 'expired') {
-    return 'Security verification expired. Verify again before asking.';
-  }
-  return 'Complete the security verification before asking.';
+function copilotUrl(): string {
+  return `${import.meta.env.VITE_COPILOT_API_URL?.replace(/\/$/, '') ?? ''}/api/copilot`;
 }
 
-function errorMessage(payload: unknown): string {
-  if (payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string') {
-    return (payload as { error: string }).error;
+const VERIFICATION_FAILURES = new Set([
+  'Complete the verification check before asking.',
+  'The verification check expired. Please try again.',
+  'The verification check failed. Please try again.',
+]);
+
+function errorMessage(payload: unknown, status: number): string {
+  const message =
+    payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string'
+      ? (payload as { error: string }).error
+      : 'Investment Copilot is unavailable.';
+  if (status === 403 && VERIFICATION_FAILURES.has(message)) {
+    return 'Investment Copilot could not accept that question. Please try again.';
   }
-  return 'Investment Copilot is unavailable.';
+  return message;
 }
