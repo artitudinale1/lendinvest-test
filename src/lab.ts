@@ -1,5 +1,5 @@
 import currentLoans from './current-loans.json';
-import { createLoans, formatPounds } from './loans';
+import { createLoans, formatPounds } from './loans.ts';
 
 export type CatalogueLoan = {
   id: string;

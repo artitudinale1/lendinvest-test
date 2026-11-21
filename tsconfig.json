@@ -16,6 +16,7 @@
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
     "forceConsistentCasingInFileNames": true,
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "verbatimModuleSyntax": true
   },

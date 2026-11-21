@@ -12,9 +12,14 @@ import { allowedCopilotModel, DEFAULT_COPILOT_MODEL, type CopilotModelId } from 
 import { createCatalogue } from '../lab';
 import { type Completion } from './provider';
 
+export type ExplanationDiagnostic =
+  | { reason: 'timeout' | 'provider' | 'empty' }
+  | { reason: 'unverified'; figures: string[] };
+
 const MAX_QUESTION = 500;
 const MAX_FIELD = 40;
 const PROVIDER_TIMEOUT_MS = 10_000;
+const MONEY_OR_RATE = /£\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+\.\d{1,2}%/g;
 
 export type CopilotSuccess = {
   intent: CopilotIntent;
@@ -55,9 +60,12 @@ This simulator does not make a real investment.`;
 
 export async function handleCopilotRequest(
   body: unknown,
-  options: { complete: Completion | null },
+  options: {
+    complete: Completion | null;
+    onExplanationFallback?: (diagnostic: ExplanationDiagnostic) => void;
+  },
 ): Promise<CopilotResult> {
-  const parsed = parseRequest(body);
+  const parsed = parseCopilotRequest(body);
   if (!parsed.ok) {
     return { status: 400, body: { error: parsed.error } };
   }
@@ -121,8 +129,15 @@ export async function handleCopilotRequest(
         },
       };
     }
-  } catch {
-    // The calculated result is still returned below.
+    options.onExplanationFallback?.(
+      explanation === ''
+        ? { reason: 'empty' }
+        : { reason: 'unverified', figures: unmatchedExplanationFigures(explanation, resolved.lines) },
+    );
+  } catch (error) {
+    options.onExplanationFallback?.({
+      reason: error instanceof Error && error.name === 'ProviderTimeout' ? 'timeout' : 'provider',
+    });
   }
 
   return {
@@ -136,7 +151,7 @@ export async function handleCopilotRequest(
   };
 }
 
-function parseRequest(
+export function parseCopilotRequest(
   body: unknown,
 ):
   | {
@@ -179,6 +194,12 @@ function parseRequest(
     return { ok: false, error: 'Choose a supported model.' };
   }
   return { ok: true, question, budget: record.budget, allocations, model };
+}
+
+function unmatchedExplanationFigures(explanation: string, lines: readonly string[]): string[] {
+  const allow = lines.join('\n');
+  const figures = explanation.match(MONEY_OR_RATE) ?? [];
+  return figures.filter((figure) => !allow.includes(figure));
 }
 
 function parseModelJson(text: string): unknown {
