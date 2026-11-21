@@ -1,0 +1,20 @@
+name = "lendinvest-copilot"
+main = "src/worker/index.ts"
+compatibility_date = "2026-11-16"
+
+# TURNSTILE_SECRET_KEY is a Worker Secret. Do not put it in this file or in a VITE_ variable.
+# Local checks use .dev.vars.
+# A deployed Worker keeps artitudinale1.github.io for both the origin and the Turnstile hostname.
+
+[vars]
+COPILOT_PROVIDER = "openai"
+COPILOT_MODEL = "openrouter/free"
+COPILOT_BASE_URL = "https://openrouter.ai/api/v1"
+
+[[durable_objects.bindings]]
+name = "COPILOT_QUOTA"
+class_name = "CopilotQuota"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CopilotQuota"]

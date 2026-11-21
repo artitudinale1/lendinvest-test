@@ -1,0 +1,6 @@
+# Local Worker only. Copy to .dev.vars. Do not commit .dev.vars.
+# These are Cloudflare's official Turnstile testing credentials.
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+# development accepts the example.com hostname returned by the test secret.
+# Leave TURNSTILE_ENV unset in production.
+TURNSTILE_ENV=development
