@@ -52,21 +52,15 @@ jobs:
           COPILOT_API_KEY: ''
           COPILOT_PROVIDER: disabled
 
-  deploy:
+  pages:
     needs: [verify, e2e]
-    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch && needs.verify.result == 'success' && needs.e2e.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read
       pages: write
       id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    concurrency:
-      group: pages
-      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -88,6 +82,23 @@ jobs:
         uses: actions/upload-pages-artifact@v5
         with:
           path: dist
+
+  deploy:
+    needs: pages
+    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch && needs.pages.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
